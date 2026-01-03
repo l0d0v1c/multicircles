@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Epicycles - Dessin par Fourier</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px;
+        }
+
+        h1 {
+            margin-bottom: 20px;
+            color: #00d4ff;
+        }
+
+        .container {
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+
+        .panel {
+            background: #16213e;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+        }
+
+        canvas {
+            background: #0f0f23;
+            border-radius: 8px;
+        }
+
+        .controls {
+            margin-top: 20px;
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        button {
+            background: #00d4ff;
+            color: #1a1a2e;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: all 0.3s;
+        }
+
+        button:hover {
+            background: #00a8cc;
+            transform: translateY(-2px);
+        }
+
+        label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        input[type="range"] {
+            width: 150px;
+        }
+
+        .info {
+            margin-top: 15px;
+            font-size: 14px;
+            color: #888;
+        }
+
+        #svgPreview {
+            width: 200px;
+            height: 200px;
+            background: #ffffff;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        #svgPreview svg {
+            max-width: 180px;
+            max-height: 180px;
+        }
+
+        .svg-selector {
+            margin-bottom: 10px;
+        }
+
+        select {
+            background: #0f0f23;
+            color: #eee;
+            border: 1px solid #00d4ff;
+            padding: 8px 12px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+
+        select:focus {
+            outline: none;
+            box-shadow: 0 0 5px #00d4ff;
+        }
+    </style>
+</head>
+<body>
+    <h1>Epicycles - Dessin par Fourier</h1>
+
+    <div class="container">
+        <div class="panel">
+            <h3>SVG Original</h3>
+            <div class="svg-selector">
+                <label>
+                    Forme:
+                    <select id="svgSelect">
+                        <option value="cat.svg">Chat</option>
+                        <option value="france.svg">France</option>
+                    </select>
+                </label>
+            </div>
+            <div id="svgPreview"></div>
+        </div>
+
+        <div class="panel">
+            <h3>Animation des Epicycles</h3>
+            <canvas id="canvas" width="600" height="600"></canvas>
+
+            <div class="controls">
+                <button id="startBtn">Démarrer</button>
+                <button id="resetBtn">Reset</button>
+
+                <label>
+                    Cercles:
+                    <input type="range" id="circleCount" min="1" max="200" value="50">
+                    <span id="circleCountDisplay">50</span>
+                </label>
+
+                <label>
+                    Vitesse:
+                    <input type="range" id="speed" min="1" max="20" value="5">
+                </label>
+            </div>
+
+            <div class="info">
+                Plus il y a de cercles, plus le dessin est précis.
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Charger le SVG externe
+        async function loadSVGPath(url) {
+            const response = await fetch(url);
+            const text = await response.text();
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(text, 'image/svg+xml');
+            const path = doc.querySelector('path');
+            const svg = doc.querySelector('svg');
+            if (!path) return null;
+
+            let viewBox = svg.getAttribute('viewBox');
+            if (!viewBox) {
+                const width = svg.getAttribute('width') || '500';
+                const height = svg.getAttribute('height') || '500';
+                viewBox = `0 0 ${parseFloat(width)} ${parseFloat(height)}`;
+            }
+
+            // Détecter si le path est dans un groupe avec transformation (scale Y négatif)
+            const group = path.parentElement;
+            let flipY = false;
+            if (group && group.tagName === 'g') {
+                const transform = group.getAttribute('transform');
+                if (transform && transform.includes('scale') && transform.includes('-')) {
+                    flipY = true;
+                }
+            }
+
+            return {
+                pathData: path.getAttribute('d'),
+                viewBox,
+                flipY
+            };
+        }
+
+        // Extraire les points du path SVG
+        function parseSVGPath(pathString) {
+            const points = [];
+            const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+            const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            path.setAttribute('d', pathString);
+            svg.appendChild(path);
+            document.body.appendChild(svg);
+
+            const totalLength = path.getTotalLength();
+            const numPoints = 500; // Nombre de points à échantillonner
+
+            for (let i = 0; i < numPoints; i++) {
+                const point = path.getPointAtLength((i / numPoints) * totalLength);
+                points.push({ x: point.x, y: point.y });
+            }
+
+            document.body.removeChild(svg);
+            return points;
+        }
+
+        // Transformation de Fourier Discrète
+        function dft(points) {
+            const X = [];
+            const N = points.length;
+
+            for (let k = 0; k < N; k++) {
+                let re = 0;
+                let im = 0;
+
+                for (let n = 0; n < N; n++) {
+                    const phi = (2 * Math.PI * k * n) / N;
+                    re += points[n].x * Math.cos(phi) + points[n].y * Math.sin(phi);
+                    im += points[n].y * Math.cos(phi) - points[n].x * Math.sin(phi);
+                }
+
+                re /= N;
+                im /= N;
+
+                const freq = k;
+                const amp = Math.sqrt(re * re + im * im);
+                const phase = Math.atan2(im, re);
+
+                X.push({ re, im, freq, amp, phase });
+            }
+
+            return X;
+        }
+
+        // Trier par amplitude décroissante
+        function sortByAmplitude(fourier) {
+            return fourier.sort((a, b) => b.amp - a.amp);
+        }
+
+        // Variables globales
+        let canvas, ctx;
+        let points = [];
+        let fourier = [];
+        let time = 0;
+        let path = [];
+        let animating = false;
+        let animationId = null;
+        let circleCount = 50;
+        let speed = 5;
+
+        // Charger et initialiser un SVG
+        async function loadAndInitSVG(svgFile) {
+            // Charger le SVG externe
+            const svgData = await loadSVGPath(svgFile);
+            if (!svgData) {
+                alert(`Erreur: impossible de charger ${svgFile}`);
+                return false;
+            }
+
+            const { pathData, viewBox, flipY } = svgData;
+
+            // Afficher le SVG preview avec transformation si nécessaire
+            const svgPreview = document.getElementById('svgPreview');
+            const [vbX, vbY, vbW, vbH] = viewBox.split(/\s+/).map(parseFloat);
+
+            if (flipY) {
+                // Le path utilise des coordonnées 10x plus grandes, ajuster le viewBox
+                const scaledViewBox = `0 0 ${vbW * 10} ${vbH * 10}`;
+                svgPreview.innerHTML = `
+                    <svg viewBox="${scaledViewBox}" xmlns="http://www.w3.org/2000/svg">
+                        <g transform="translate(0, ${vbH * 10}) scale(1, -1)">
+                            <path d="${pathData}" fill="none" stroke="#1a1a2e" stroke-width="${vbW / 10}"/>
+                        </g>
+                    </svg>
+                `;
+            } else {
+                svgPreview.innerHTML = `
+                    <svg viewBox="${viewBox}" xmlns="http://www.w3.org/2000/svg">
+                        <path d="${pathData}" fill="none" stroke="#1a1a2e" stroke-width="2"/>
+                    </svg>
+                `;
+            }
+
+            // Parser le path et calculer la DFT
+            points = parseSVGPath(pathData);
+
+            // Inverser Y si nécessaire (pour les SVG avec scale négatif)
+            if (flipY) {
+                points = points.map(p => ({ x: p.x, y: -p.y }));
+            }
+
+            // Centrer les points
+            const centerX = points.reduce((sum, p) => sum + p.x, 0) / points.length;
+            const centerY = points.reduce((sum, p) => sum + p.y, 0) / points.length;
+            points = points.map(p => ({ x: p.x - centerX, y: p.y - centerY }));
+
+            // Mettre à l'échelle pour s'adapter au canvas
+            const maxDist = Math.max(...points.map(p => Math.max(Math.abs(p.x), Math.abs(p.y))));
+            const scale = 200 / maxDist;
+            points = points.map(p => ({ x: p.x * scale, y: p.y * scale }));
+
+            // Calculer la transformation de Fourier
+            fourier = sortByAmplitude(dft(points));
+
+            // Reset animation
+            time = 0;
+            path = [];
+
+            return true;
+        }
+
+        // Initialisation
+        async function init() {
+            canvas = document.getElementById('canvas');
+            ctx = canvas.getContext('2d');
+
+            // Charger le SVG initial
+            await loadAndInitSVG('cat.svg');
+
+            // Event listener pour le sélecteur de SVG
+            document.getElementById('svgSelect').addEventListener('change', async (e) => {
+                animating = false;
+                document.getElementById('startBtn').textContent = 'Démarrer';
+                await loadAndInitSVG(e.target.value);
+            });
+
+            // Event listeners
+            document.getElementById('startBtn').addEventListener('click', toggleAnimation);
+            document.getElementById('resetBtn').addEventListener('click', reset);
+            document.getElementById('circleCount').addEventListener('input', (e) => {
+                circleCount = parseInt(e.target.value);
+                document.getElementById('circleCountDisplay').textContent = circleCount;
+            });
+            document.getElementById('speed').addEventListener('input', (e) => {
+                speed = parseInt(e.target.value);
+            });
+
+            draw();
+        }
+
+        // Dessiner les épicycles et retourner la position finale
+        function drawEpicycles(x, y, rotation, fourierData, numCircles) {
+            for (let i = 0; i < Math.min(numCircles, fourierData.length); i++) {
+                const prevX = x;
+                const prevY = y;
+
+                const freq = fourierData[i].freq;
+                const radius = fourierData[i].amp;
+                const phase = fourierData[i].phase;
+
+                x += radius * Math.cos(freq * time + phase + rotation);
+                y += radius * Math.sin(freq * time + phase + rotation);
+
+                // Dessiner le cercle
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.arc(prevX, prevY, radius, 0, 2 * Math.PI);
+                ctx.stroke();
+
+                // Dessiner la ligne vers le point sur le cercle
+                ctx.strokeStyle = 'rgba(0, 212, 255, 0.6)';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(prevX, prevY);
+                ctx.lineTo(x, y);
+                ctx.stroke();
+            }
+
+            return { x, y };
+        }
+
+        // Dessiner le chemin tracé
+        function drawPath() {
+            ctx.strokeStyle = '#ff6b6b';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+
+            if (path.length > 0) {
+                ctx.moveTo(path[0].x, path[0].y);
+                for (let i = 1; i < path.length; i++) {
+                    ctx.lineTo(path[i].x, path[i].y);
+                }
+            }
+
+            ctx.stroke();
+        }
+
+        // Boucle de dessin principale
+        function draw() {
+            ctx.fillStyle = '#0f0f23';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            const centerX = canvas.width / 2;
+            const centerY = canvas.height / 2;
+
+            // Dessiner les épicycles
+            const result = drawEpicycles(centerX, centerY, 0, fourier, circleCount);
+
+            // Ajouter le point au chemin
+            if (animating) {
+                path.unshift({ x: result.x, y: result.y });
+
+                // Limiter la longueur du chemin pour ne pas surcharger
+                if (path.length > points.length + 50) {
+                    path.pop();
+                }
+            }
+
+            // Dessiner le chemin
+            drawPath();
+
+            // Dessiner le point final
+            ctx.fillStyle = '#00d4ff';
+            ctx.beginPath();
+            ctx.arc(result.x, result.y, 5, 0, 2 * Math.PI);
+            ctx.fill();
+
+            // Incrémenter le temps
+            if (animating) {
+                const dt = (2 * Math.PI / points.length) * (speed / 5);
+                time += dt;
+
+                // Réinitialiser après un tour complet
+                if (time > 2 * Math.PI) {
+                    time = 0;
+                    path = [];
+                }
+            }
+
+            animationId = requestAnimationFrame(draw);
+        }
+
+        // Toggle animation
+        function toggleAnimation() {
+            animating = !animating;
+            document.getElementById('startBtn').textContent = animating ? 'Pause' : 'Démarrer';
+        }
+
+        // Reset
+        function reset() {
+            animating = false;
+            time = 0;
+            path = [];
+            document.getElementById('startBtn').textContent = 'Démarrer';
+        }
+
+        // Démarrer
+        window.onload = init;
+    </script>
+</body>
+</html>
