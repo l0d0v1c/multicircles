@@ -6,7 +6,7 @@ Visualisation interactive des séries de Fourier pour dessiner des formes SVG à
 
 [Voir la démo en ligne](https://l0d0v1c.github.io/multicircles)
 
-<video src="https://l0d0v1c.github.io/multicircles/epi.mp4" autoplay loop muted playsinline width="600"></video>
+![Demo](epi.gif)
 
 ## Principe
 
